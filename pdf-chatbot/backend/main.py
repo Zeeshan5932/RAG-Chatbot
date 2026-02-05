@@ -1,74 +1,3 @@
-# # 
-
-# from dotenv import load_dotenv
-# load_dotenv()
-
-# from fastapi import FastAPI, UploadFile, File, Query
-# import shutil
-# import os
-# import uuid
-
-# from pdf_processor import process_pdfs
-# from qa_chain import create_qa_chain
-# from session_manager import SessionManager
-
-# app = FastAPI()
-
-# UPLOAD_DIR = "temp"
-# os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# session_manager = SessionManager()
-
-# @app.post("/start-session/")
-# def start_session():
-#     session_id = str(uuid.uuid4())
-#     session_manager.get_session(session_id)
-#     return {"session_id": session_id}
-
-
-# @app.post("/upload-pdfs/")
-# async def upload_pdfs(
-#     session_id: str = Query(...),
-#     files: list[UploadFile] = File(...)
-# ):
-#     session = session_manager.get_session(session_id)
-
-#     file_paths = []
-
-#     for file in files:
-#         path = os.path.join(UPLOAD_DIR, f"{session_id}_{file.filename}")
-#         with open(path, "wb") as buffer:
-#             shutil.copyfileobj(file.file, buffer)
-#         file_paths.append(path)
-
-#     chunks = process_pdfs(file_paths)
-
-#     session["qa_chain"] = create_qa_chain(
-#         chunks,
-#         session["memory"]
-#     )
-
-#     for path in file_paths:
-#         os.remove(path)
-
-#     return {"message": "PDFs uploaded and processed"}
-
-
-# @app.post("/ask/")
-# async def ask_question(
-#     session_id: str = Query(...),
-#     question: str = Query(...)
-# ):
-#     session = session_manager.get_session(session_id)
-
-#     if session["qa_chain"] is None:
-#         return {"error": "Upload PDFs first"}
-
-#     result = session["qa_chain"].invoke({"question": question})
-#     return {"answer": result["answer"]}
-
-
-
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -84,28 +13,40 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
-# ---------------- CONFIG ----------------
+# ============== CONFIG ==============
 UPLOAD_DIR = "temp"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-st.set_page_config(page_title="PDF RAG Chatbot")
-st.title("📄 PDF Chatbot (All-in-One)")
+# Configurable backend URL (change if needed)
+BACKEND_URL = "http://localhost:8000"
 
-# ---------------- SESSION INIT ----------------
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
+# ============== PAGE CONFIG ==============
+st.set_page_config(page_title="PDF RAG Chatbot", layout="wide")
+st.title("📄 PDF Chatbot")
 
+# ============== SESSION STATE INITIALIZATION ==============
+# Track whether a PDF has been successfully uploaded
+if "pdf_uploaded" not in st.session_state:
+    st.session_state.pdf_uploaded = False
+
+# Store chat history as a list of dicts with "role" and "content"
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# Store the QA chain for answering questions
 if "qa_chain" not in st.session_state:
     st.session_state.qa_chain = None
 
+# Store conversation memory for context
 if "memory" not in st.session_state:
     st.session_state.memory = ConversationBufferMemory(
         memory_key="chat_history",
         return_messages=True
     )
 
-# ---------------- PDF PROCESSING ----------------
+# ============== PDF PROCESSING FUNCTIONS ==============
 def process_pdfs(file_paths):
+    """Load and split PDF documents into chunks."""
     docs = []
     for path in file_paths:
         loader = PyPDFLoader(path)
@@ -117,12 +58,14 @@ def process_pdfs(file_paths):
     )
     return splitter.split_documents(docs)
 
+
 def create_chain(chunks):
+    """Create a ConversationalRetrievalChain from PDF chunks."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         st.error("⚠️ OPENAI_API_KEY not found. Please set it in your environment variables or Streamlit secrets.")
         st.stop()
-    
+
     embeddings = OpenAIEmbeddings(api_key=api_key)
     vectorstore = FAISS.from_documents(chunks, embeddings)
 
@@ -134,56 +77,104 @@ def create_chain(chunks):
         memory=st.session_state.memory
     )
 
-# ---------------- UI: PDF UPLOAD ----------------
-uploaded_files = st.file_uploader(
-    "Upload one or more PDFs",
-    type="pdf",
-    accept_multiple_files=True
-)
+# ============== PDF UPLOAD SECTION ==============
+if not st.session_state.pdf_uploaded:
+    st.subheader("📤 Upload PDF Documents")
+    
+    uploaded_files = st.file_uploader(
+        "Select one or more PDF files",
+        type="pdf",
+        accept_multiple_files=True
+    )
 
-if uploaded_files and st.button("Process PDFs"):
-    file_paths = []
+    if uploaded_files and st.button("Process PDFs", key="process_btn"):
+        file_paths = []
 
-    with st.spinner("Processing PDFs..."):
-        for file in uploaded_files:
-            path = os.path.join(
-                UPLOAD_DIR,
-                f"{st.session_state.session_id}_{file.name}"
-            )
-            with open(path, "wb") as f:
-                shutil.copyfileobj(file, f)
-            file_paths.append(path)
+        with st.spinner("Processing PDFs..."):
+            try:
+                for file in uploaded_files:
+                    path = os.path.join(
+                        UPLOAD_DIR,
+                        f"{uuid.uuid4()}_{file.name}"
+                    )
+                    with open(path, "wb") as f:
+                        shutil.copyfileobj(file, f)
+                    file_paths.append(path)
 
-        chunks = process_pdfs(file_paths)
-        st.session_state.qa_chain = create_chain(chunks)
+                # Process PDFs and create QA chain
+                chunks = process_pdfs(file_paths)
+                st.session_state.qa_chain = create_chain(chunks)
 
-        for path in file_paths:
-            os.remove(path)
+                # Clean up temporary files
+                for path in file_paths:
+                    os.remove(path)
 
-    st.success("PDFs processed successfully!")
+                # Mark PDF as uploaded and reset chat history
+                st.session_state.pdf_uploaded = True
+                st.session_state.chat_history = []
 
-# ---------------- UI: CHAT ----------------
-st.divider()
-st.subheader("Ask Questions")
+                st.success("✅ PDFs processed successfully! Ready to chat.")
+                st.rerun()
 
-question = st.text_input("Ask something from the PDFs")
+            except Exception as e:
+                st.error(f"❌ Error processing PDFs: {str(e)}")
 
-if st.button("Ask"):
-    if st.session_state.qa_chain is None:
-        st.warning("Please upload and process PDFs first")
-    elif question:
-        with st.spinner("Thinking..."):
-            result = st.session_state.qa_chain.invoke(
-                {"question": question}
-            )
-        st.markdown("### Answer")
-        st.write(result["answer"])
+else:
+    # ============== CHATBOT INTERFACE ==============
+    st.subheader("💬 Chat with Your PDFs")
 
-# ---------------- CHAT HISTORY ----------------
-if st.session_state.memory.chat_memory.messages:
+    # Display chat history
+    if st.session_state.chat_history:
+        st.write("---")
+        for msg in st.session_state.chat_history:
+            if msg["role"] == "user":
+                st.markdown(f"**You:** {msg['content']}")
+            else:
+                st.markdown(f"**Bot:** {msg['content']}")
+        st.write("---")
+
+    # User input for questions
+    user_question = st.text_input(
+        "Ask a question about your PDFs:",
+        placeholder="Type your question here...",
+        key="user_input"
+    )
+
+    # Process user question
+    if user_question:
+        # Add user message to chat history
+        st.session_state.chat_history.append({
+            "role": "user",
+            "content": user_question
+        })
+
+        # Get response from QA chain
+        with st.spinner("🤔 Thinking..."):
+            try:
+                result = st.session_state.qa_chain.invoke(
+                    {"question": user_question}
+                )
+                bot_answer = result.get("answer", "Sorry, I couldn't generate an answer.")
+
+                # Add bot response to chat history
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": bot_answer
+                })
+
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"❌ Error getting answer: {str(e)}")
+
+    # Option to reset and upload new PDFs
     st.divider()
-    st.subheader("Chat History")
-
-    for msg in st.session_state.memory.chat_memory.messages:
-        role = "🧑 User" if msg.type == "human" else "🤖 Assistant"
-        st.markdown(f"**{role}:** {msg.content}")
+    if st.button("📁 Upload Different PDFs", key="reset_btn"):
+        st.session_state.pdf_uploaded = False
+        st.session_state.chat_history = []
+        st.session_state.qa_chain = None
+        st.session_state.memory = ConversationBufferMemory(
+            memory_key="chat_history",
+            return_messages=True
+        )
+        st.rerun()
