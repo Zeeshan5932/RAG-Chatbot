@@ -118,10 +118,15 @@ def process_pdfs(file_paths):
     return splitter.split_documents(docs)
 
 def create_chain(chunks):
-    embeddings = OpenAIEmbeddings()
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        st.error("⚠️ OPENAI_API_KEY not found. Please set it in your environment variables or Streamlit secrets.")
+        st.stop()
+    
+    embeddings = OpenAIEmbeddings(api_key=api_key)
     vectorstore = FAISS.from_documents(chunks, embeddings)
 
-    llm = ChatOpenAI(temperature=0)
+    llm = ChatOpenAI(api_key=api_key, temperature=0)
 
     return ConversationalRetrievalChain.from_llm(
         llm=llm,
