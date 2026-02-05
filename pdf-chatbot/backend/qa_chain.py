@@ -25,7 +25,8 @@
 
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
+from langchain.chains.conversational_retrieval.base import ConversationalRetrievalChain
+
 
 def create_qa_chain(chunks, memory):
     embeddings = OpenAIEmbeddings()
